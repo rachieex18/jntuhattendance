@@ -32,7 +32,7 @@ interface SignupData {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const [user, setUser] = useState<User | null>(null);
@@ -189,16 +189,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ 
-            user, 
-            loading, 
-            login, 
-            signup, 
-            verifyOTP, 
-            forgotPassword, 
-            verifyResetCode, 
-            resetPassword, 
-            signOut 
+        <AuthContext.Provider value={{
+            user,
+            loading,
+            login,
+            signup,
+            verifyOTP,
+            forgotPassword,
+            verifyResetCode,
+            resetPassword,
+            signOut
         }}>
             {children}
         </AuthContext.Provider>

@@ -1,5 +1,5 @@
 // ============================================
-// JNTU ATTENDANCE TRACKER BACKEND
+// JNTU ATTENDANCE TRACKER BACKEND (SUPABASE)
 // ============================================
 
 require('dotenv').config();
@@ -8,7 +8,7 @@ const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(express.json());
@@ -32,74 +32,16 @@ const transporter = nodemailer.createTransport({
 });
 
 // ============================================
-// 📊 DATABASE SETUP (SQLite for now)
+// 📊 SUPABASE SETUP
 // ============================================
-const db = new sqlite3.Database('./attendance.db');
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
-// Initialize database tables
-db.serialize(() => {
-  // Users table
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    full_name TEXT,
-    roll_number TEXT UNIQUE,
-    semester INTEGER,
-    branch TEXT,
-    verified BOOLEAN DEFAULT FALSE,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ Missing Supabase configuration! Please check your .env file.');
+}
 
-  // Subjects table
-  db.run(`CREATE TABLE IF NOT EXISTS subjects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    subject_name TEXT NOT NULL,
-    credits INTEGER DEFAULT 3,
-    hours_per_week INTEGER DEFAULT 4,
-    subject_type TEXT CHECK (subject_type IN ('theory', 'lab')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    UNIQUE(user_id, subject_name)
-  )`);
-
-  // Attendance table
-  db.run(`CREATE TABLE IF NOT EXISTS attendance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    subject_id INTEGER,
-    user_id INTEGER,
-    date DATE NOT NULL,
-    hours_attended DECIMAL NOT NULL,
-    total_hours DECIMAL NOT NULL,
-    is_midterm BOOLEAN DEFAULT FALSE,
-    notes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (subject_id) REFERENCES subjects (id),
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    UNIQUE(subject_id, user_id, date)
-  )`);
-
-  // Friendships table
-  db.run(`CREATE TABLE IF NOT EXISTS friendships (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    friend_id INTEGER NOT NULL,
-    status TEXT CHECK (status IN ('pending', 'accepted', 'blocked')) DEFAULT 'pending',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (friend_id) REFERENCES users (id),
-    UNIQUE(user_id, friend_id)
-  )`);
-});
-
-// ============================================
-// 📊 TEMPORARY STORAGE
-// ============================================
-const pendingUsers = new Map();
-const verificationCodes = new Map();
-const resetTokens = new Map(); // For password reset
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ============================================
 // 🔧 HELPER FUNCTIONS
@@ -226,39 +168,47 @@ app.post('/api/forgot-password', async (req, res) => {
     }
 
     // Check if user exists
-    db.get('SELECT * FROM users WHERE email = ? AND verified = TRUE', [email], async (err, user) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .eq('verified', true)
+      .single();
 
-      // For security, don't reveal if email exists or not
-      if (!user) {
-        return res.status(200).json({
-          message: 'If this email exists, a reset code has been sent.'
-        });
-      }
+    if (userError && userError.code !== 'PGRST116') {
+      return res.status(500).json({ error: 'Database error' });
+    }
 
-      // Generate reset code
-      const resetCode = generateResetCode();
+    // For security, don't reveal if email exists or not
+    if (!user) {
+      return res.status(200).json({
+        message: 'If this email exists, a reset code has been sent.'
+      });
+    }
 
-      // Store reset code with expiry (15 minutes)
-      resetTokens.set(email, {
+    // Generate reset code
+    const resetCode = generateResetCode();
+
+    // Store reset code with expiry (15 minutes) in verification_codes table
+    await supabase
+      .from('verification_codes')
+      .upsert({
+        email,
         code: resetCode,
-        expiresAt: Date.now() + 15 * 60 * 1000, // 15 minutes
+        expires_at: Date.now() + 15 * 60 * 1000,
       });
 
-      try {
-        // Send reset code email
-        await sendResetCodeEmail(email, resetCode);
-        res.status(200).json({
-          message: 'Reset code sent to your email.',
-          email: email,
-        });
-      } catch (emailError) {
-        console.error('Email error:', emailError);
-        res.status(500).json({ error: 'Failed to send reset code' });
-      }
-    });
+    try {
+      // Send reset code email
+      await sendResetCodeEmail(email, resetCode);
+      res.status(200).json({
+        message: 'Reset code sent to your email.',
+        email: email,
+      });
+    } catch (emailError) {
+      console.error('Email error:', emailError);
+      res.status(500).json({ error: 'Failed to send reset code' });
+    }
 
   } catch (error) {
     console.error('Forgot password error:', error);
@@ -276,15 +226,19 @@ app.post('/api/verify-reset-code', async (req, res) => {
     }
 
     // Check if reset code exists
-    const storedData = resetTokens.get(email);
+    const { data: storedData, error: codeError } = await supabase
+      .from('verification_codes')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-    if (!storedData) {
+    if (codeError || !storedData) {
       return res.status(400).json({ error: 'Invalid or expired reset code' });
     }
 
     // Check if expired
-    if (Date.now() > storedData.expiresAt) {
-      resetTokens.delete(email);
+    if (Date.now() > storedData.expires_at) {
+      await supabase.from('verification_codes').delete().eq('email', email);
       return res.status(400).json({ error: 'Reset code has expired' });
     }
 
@@ -295,14 +249,18 @@ app.post('/api/verify-reset-code', async (req, res) => {
 
     // Code is valid - generate a temporary token for password reset
     const resetToken = generateToken();
-    resetTokens.set(resetToken, {
-      email: email,
-      expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes to complete reset
-      verified: true,
-    });
+
+    await supabase
+      .from('reset_tokens')
+      .insert({
+        token: resetToken,
+        email: email,
+        expires_at: Date.now() + 5 * 60 * 1000,
+        verified: true,
+      });
 
     // Delete the code token
-    resetTokens.delete(email);
+    await supabase.from('verification_codes').delete().eq('email', email);
 
     res.status(200).json({
       message: 'Code verified. You can now reset your password.',
@@ -332,15 +290,19 @@ app.post('/api/reset-password', async (req, res) => {
     }
 
     // Check if token exists
-    const tokenData = resetTokens.get(resetToken);
+    const { data: tokenData, error: tokenError } = await supabase
+      .from('reset_tokens')
+      .select('*')
+      .eq('token', resetToken)
+      .single();
 
-    if (!tokenData) {
+    if (tokenError || !tokenData) {
       return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
 
     // Check if expired
-    if (Date.now() > tokenData.expiresAt) {
-      resetTokens.delete(resetToken);
+    if (Date.now() > tokenData.expires_at) {
+      await supabase.from('reset_tokens').delete().eq('token', resetToken);
       return res.status(400).json({ error: 'Reset token has expired' });
     }
 
@@ -348,28 +310,30 @@ app.post('/api/reset-password', async (req, res) => {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     // Update password in database
-    db.run('UPDATE users SET password = ? WHERE email = ?', [hashedPassword, tokenData.email], async function (err) {
-      if (err) {
-        console.error('Database error:', err);
-        return res.status(500).json({ error: 'Failed to update password' });
-      }
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password: hashedPassword })
+      .eq('email', tokenData.email);
 
-      // Clean up token
-      resetTokens.delete(resetToken);
+    if (updateError) {
+      console.error('Database error:', updateError);
+      return res.status(500).json({ error: 'Failed to update password' });
+    }
 
-      try {
-        // Send confirmation email
-        await sendPasswordChangedEmail(tokenData.email);
-      } catch (emailError) {
-        console.error('Email error:', emailError);
-        // Don't fail the request if email fails
-      }
+    // Clean up token
+    await supabase.from('reset_tokens').delete().eq('token', resetToken);
 
-      console.log('✅ Password reset successful for:', tokenData.email);
+    try {
+      // Send confirmation email
+      await sendPasswordChangedEmail(tokenData.email);
+    } catch (emailError) {
+      console.error('Email error:', emailError);
+    }
 
-      res.status(200).json({
-        message: 'Password reset successfully! You can now login with your new password.',
-      });
+    console.log('✅ Password reset successful for:', tokenData.email);
+
+    res.status(200).json({
+      message: 'Password reset successfully! You can now login with your new password.',
     });
 
   } catch (error) {
@@ -392,50 +356,65 @@ app.post('/api/signup', async (req, res) => {
     }
 
     // Check if user already exists
-    db.get('SELECT * FROM users WHERE email = ? OR roll_number = ?', [email, rollNumber], async (err, row) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('*')
+      .or(`email.eq.${email},roll_number.eq.${rollNumber}`)
+      .single();
 
-      if (row) {
-        return res.status(400).json({ error: 'User with this email or roll number already exists' });
-      }
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email or roll number already exists' });
+    }
 
-      // Hash password
-      const hashedPassword = await bcrypt.hash(password, 10);
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Generate OTP
-      const otp = generateOTP();
+    // Generate OTP
+    const otp = generateOTP();
 
-      // Store user data temporarily
-      pendingUsers.set(email, {
+    // Store user data temporarily in pending_users table
+    const { error: pendingError } = await supabase
+      .from('pending_users')
+      .upsert({
         email,
         password: hashedPassword,
-        fullName,
-        rollNumber,
+        full_name: fullName,
+        roll_number: rollNumber,
         semester: parseInt(semester) || null,
         branch,
-        createdAt: Date.now(),
+        created_at: Date.now(),
       });
 
-      // Store OTP with expiry
-      verificationCodes.set(email, {
+    if (pendingError) {
+      console.error('Pending user error:', pendingError);
+      return res.status(500).json({ error: 'Failed to save signup data' });
+    }
+
+    // Store OTP in verification_codes table
+    const { error: otpError } = await supabase
+      .from('verification_codes')
+      .upsert({
+        email,
         code: otp,
-        expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
+        expires_at: Date.now() + 10 * 60 * 1000,
       });
 
-      // Send OTP email
-      try {
-        await sendOTPEmail(email, otp);
-        res.status(200).json({
-          message: 'OTP sent to your email. Please verify to complete signup.',
-          email: email,
-        });
-      } catch (emailError) {
-        console.error('Email error:', emailError);
-        res.status(500).json({ error: 'Failed to send verification email' });
-      }
-    });
+    if (otpError) {
+      console.error('OTP storage error:', otpError);
+      return res.status(500).json({ error: 'Failed to save verification code' });
+    }
+
+    // Send OTP email
+    try {
+      await sendOTPEmail(email, otp);
+      res.status(200).json({
+        message: 'OTP sent to your email. Please verify to complete signup.',
+        email: email,
+      });
+    } catch (emailError) {
+      console.error('Email error:', emailError);
+      res.status(500).json({ error: 'Failed to send verification email' });
+    }
 
   } catch (error) {
     console.error('Signup error:', error);
@@ -448,55 +427,70 @@ app.post('/api/verify-otp', async (req, res) => {
   try {
     const { email, otp } = req.body;
 
-    const storedData = verificationCodes.get(email);
+    const { data: storedCode, error: codeError } = await supabase
+      .from('verification_codes')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-    if (!storedData) {
+    if (codeError || !storedCode) {
       return res.status(400).json({ error: 'Invalid or expired OTP' });
     }
 
-    if (Date.now() > storedData.expiresAt) {
-      verificationCodes.delete(email);
+    if (Date.now() > storedCode.expires_at) {
+      await supabase.from('verification_codes').delete().eq('email', email);
       return res.status(400).json({ error: 'OTP has expired' });
     }
 
-    if (storedData.code !== otp) {
+    if (storedCode.code !== otp) {
       return res.status(400).json({ error: 'Invalid OTP' });
     }
 
-    const userData = pendingUsers.get(email);
+    const { data: userData, error: userError } = await supabase
+      .from('pending_users')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-    if (!userData) {
+    if (userError || !userData) {
       return res.status(400).json({ error: 'User data not found' });
     }
 
     // Create user in database
-    db.run(
-      `INSERT INTO users (email, password, full_name, roll_number, semester, branch, verified) 
-       VALUES (?, ?, ?, ?, ?, ?, TRUE)`,
-      [userData.email, userData.password, userData.fullName, userData.rollNumber, userData.semester, userData.branch],
-      function (err) {
-        if (err) {
-          console.error('Database error:', err);
-          return res.status(500).json({ error: 'Failed to create user' });
-        }
+    const { data: newUser, error: insertError } = await supabase
+      .from('users')
+      .insert({
+        email: userData.email,
+        password: userData.password,
+        full_name: userData.full_name,
+        roll_number: userData.roll_number,
+        semester: userData.semester,
+        branch: userData.branch,
+        verified: true
+      })
+      .select()
+      .single();
 
-        // Clean up temporary storage
-        pendingUsers.delete(email);
-        verificationCodes.delete(email);
+    if (insertError) {
+      console.error('Database error:', insertError);
+      return res.status(500).json({ error: 'Failed to create user' });
+    }
 
-        res.status(200).json({
-          message: 'Email verified successfully! Account created.',
-          user: {
-            id: this.lastID,
-            email: userData.email,
-            fullName: userData.fullName,
-            rollNumber: userData.rollNumber,
-            semester: userData.semester,
-            branch: userData.branch
-          },
-        });
-      }
-    );
+    // Clean up temporary storage
+    await supabase.from('pending_users').delete().eq('email', email);
+    await supabase.from('verification_codes').delete().eq('email', email);
+
+    res.status(200).json({
+      message: 'Email verified successfully! Account created.',
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        fullName: newUser.full_name,
+        rollNumber: newUser.roll_number,
+        semester: newUser.semester,
+        branch: newUser.branch
+      },
+    });
 
   } catch (error) {
     console.error('Verification error:', error);
@@ -513,33 +507,34 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    db.get('SELECT * FROM users WHERE email = ? AND verified = TRUE', [email], async (err, user) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .eq('verified', true)
+      .single();
+
+    if (userError || !user) {
+      return res.status(400).json({ error: 'Invalid credentials or unverified account' });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password);
+
+    if (!validPassword) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Return user data
+    res.status(200).json({
+      message: 'Login successful',
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        rollNumber: user.roll_number,
+        semester: user.semester,
+        branch: user.branch
       }
-
-      if (!user) {
-        return res.status(400).json({ error: 'Invalid credentials or unverified account' });
-      }
-
-      const validPassword = await bcrypt.compare(password, user.password);
-
-      if (!validPassword) {
-        return res.status(400).json({ error: 'Invalid credentials' });
-      }
-
-      // Return user data
-      res.status(200).json({
-        message: 'Login successful',
-        user: {
-          id: user.id,
-          email: user.email,
-          fullName: user.full_name,
-          rollNumber: user.roll_number,
-          semester: user.semester,
-          branch: user.branch
-        }
-      });
     });
 
   } catch (error) {
@@ -549,196 +544,100 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Get user subjects
-app.get('/api/subjects/:userId', (req, res) => {
+app.get('/api/subjects/:userId', async (req, res) => {
   const userId = req.params.userId;
 
-  db.all('SELECT * FROM subjects WHERE user_id = ?', [userId], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(rows);
-  });
+  const { data: rows, error } = await supabase
+    .from('subjects')
+    .select('*')
+    .eq('user_id', userId);
+
+  if (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+  res.json(rows);
 });
 
 // Add subject
-app.post('/api/subjects', (req, res) => {
+app.post('/api/subjects', async (req, res) => {
   const { userId, subjectName, credits, hoursPerWeek, subjectType } = req.body;
 
-  db.run(
-    'INSERT INTO subjects (user_id, subject_name, credits, hours_per_week, subject_type) VALUES (?, ?, ?, ?, ?)',
-    [userId, subjectName, credits, hoursPerWeek, subjectType],
-    function (err) {
-      if (err) {
-        return res.status(500).json({ error: 'Failed to add subject' });
-      }
-      res.json({ id: this.lastID, message: 'Subject added successfully' });
-    }
-  );
+  const { data, error } = await supabase
+    .from('subjects')
+    .insert({
+      user_id: userId,
+      subject_name: subjectName,
+      credits: credits,
+      hours_per_week: hoursPerWeek,
+      subject_type: subjectType
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Add subject error:', error);
+    return res.status(500).json({ error: 'Failed to add subject' });
+  }
+  res.json({ id: data.id, message: 'Subject added successfully' });
 });
 
 // Delete subject
-app.delete('/api/subjects/:id', (req, res) => {
+app.delete('/api/subjects/:id', async (req, res) => {
   const subjectId = req.params.id;
   console.log(`🗑️ Request to delete subject ID: ${subjectId}`);
 
-  // First delete attendance records associated with this subject
-  db.run('DELETE FROM attendance WHERE subject_id = ?', [subjectId], (err) => {
-    if (err) {
-      console.error(`❌ Error deleting attendance for subject ${subjectId}:`, err);
-      return res.status(500).json({ error: 'Failed to delete subject data' });
-    }
-    console.log(`✅ Deleted attendance for subject ${subjectId}`);
+  // Cascade delete should handle attendance if foreign key is set correctly in Supabase
+  const { error } = await supabase
+    .from('subjects')
+    .delete()
+    .eq('id', subjectId);
 
-    // Now delete the subject itself
-    db.run('DELETE FROM subjects WHERE id = ?', [subjectId], function (err) {
-      if (err) {
-        console.error(`❌ Error deleting subject ${subjectId}:`, err);
-        return res.status(500).json({ error: 'Failed to delete subject' });
-      }
-      console.log(`✅ Deleted subject ${subjectId} (Rows affected: ${this.changes})`);
-      res.json({ message: 'Subject and all its attendance records deleted successfully' });
-    });
-  });
+  if (error) {
+    console.error(`❌ Error deleting subject ${subjectId}:`, error);
+    return res.status(500).json({ error: 'Failed to delete subject' });
+  }
+
+  res.json({ message: 'Subject and its records deleted successfully' });
 });
 
 // Get attendance records
-app.get('/api/attendance/:userId', (req, res) => {
+app.get('/api/attendance/:userId', async (req, res) => {
   const userId = req.params.userId;
 
-  db.all('SELECT * FROM attendance WHERE user_id = ?', [userId], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(rows);
-  });
+  const { data: rows, error } = await supabase
+    .from('attendance')
+    .select('*')
+    .eq('user_id', userId);
+
+  if (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+  res.json(rows);
 });
 
 // Add attendance record
-app.post('/api/attendance', (req, res) => {
+app.post('/api/attendance', async (req, res) => {
   const { userId, subjectId, date, hoursAttended, totalHours, isMidterm, notes } = req.body;
 
-  db.run(
-    `INSERT OR REPLACE INTO attendance 
-     (user_id, subject_id, date, hours_attended, total_hours, is_midterm, notes) 
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [userId, subjectId, date, hoursAttended, totalHours, isMidterm, notes],
-    function (err) {
-      if (err) {
-        return res.status(500).json({ error: 'Failed to save attendance' });
-      }
-      res.json({ id: this.lastID, message: 'Attendance saved successfully' });
-    }
-  );
-});
+  const { data, error } = await supabase
+    .from('attendance')
+    .upsert({
+      user_id: userId,
+      subject_id: subjectId,
+      date: date,
+      hours_attended: hoursAttended,
+      total_hours: totalHours,
+      is_midterm: isMidterm,
+      notes: notes
+    })
+    .select()
+    .single();
 
-// ============================================
-// 🛣️ API ROUTES - FRIENDS & SOCIAL
-// ============================================
-
-// Search users to add as friends
-app.get('/api/users/search', (req, res) => {
-  const { query, currentUserId } = req.query;
-  if (!query) return res.json([]);
-
-  const searchTerm = `%${query}%`;
-  db.all(
-    `SELECT id, email, full_name, roll_number, branch 
-     FROM users 
-     WHERE (email LIKE ? OR roll_number LIKE ? OR full_name LIKE ?) 
-     AND id != ? AND verified = TRUE 
-     LIMIT 10`,
-    [searchTerm, searchTerm, searchTerm, currentUserId],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: 'Search failed' });
-      res.json(rows);
-    }
-  );
-});
-
-// Send friend request
-app.post('/api/friends/request', (req, res) => {
-  const { userId, friendId } = req.body;
-
-  db.run(
-    'INSERT INTO friendships (user_id, friend_id, status) VALUES (?, ?, "pending")',
-    [userId, friendId],
-    function (err) {
-      if (err) {
-        if (err.message.includes('UNIQUE')) {
-          return res.status(400).json({ error: 'Friend request already exists' });
-        }
-        return res.status(500).json({ error: 'Failed to send request' });
-      }
-      res.json({ message: 'Friend request sent' });
-    }
-  );
-});
-
-// Accept friend request
-app.post('/api/friends/accept', (req, res) => {
-  const { userId, friendId } = req.body;
-
-  db.run(
-    'UPDATE friendships SET status = "accepted", updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND friend_id = ?',
-    [friendId, userId], // Note: friendId is the original sender
-    function (err) {
-      if (err) return res.status(500).json({ error: 'Failed to accept request' });
-      res.json({ message: 'Friend request accepted' });
-    }
-  );
-});
-
-// List friends and pending requests
-app.get('/api/friends/:userId', (req, res) => {
-  const userId = req.params.userId;
-
-  const query = `
-    SELECT f.id as friendship_id, f.status, f.user_id as sender_id,
-           u.id as user_id, u.email, u.full_name, u.roll_number, u.branch
-    FROM friendships f
-    JOIN users u ON (f.user_id = u.id OR f.friend_id = u.id)
-    WHERE (f.user_id = ? OR f.friend_id = ?) AND u.id != ?
-  `;
-
-  db.all(query, [userId, userId, userId], (err, rows) => {
-    if (err) return res.status(500).json({ error: 'Failed to fetch friends' });
-    res.json(rows);
-  });
-});
-
-// Get friend's attendance summary (if accepted)
-app.get('/api/friends/attendance/:friendId', (req, res) => {
-  const friendId = req.params.friendId;
-  const currentUserId = req.query.userId;
-
-  // Verify friendship exists and is accepted
-  db.get(
-    'SELECT * FROM friendships WHERE ((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)) AND status = "accepted"',
-    [currentUserId, friendId, friendId, currentUserId],
-    (err, friendship) => {
-      if (err || !friendship) {
-        return res.status(403).json({ error: 'Not authorized to view this data' });
-      }
-
-      // Fetch summary stats for friend
-      const statsQuery = `
-        SELECT 
-          SUM(hours_attended) as attended,
-          SUM(total_hours) as total
-        FROM attendance
-        WHERE user_id = ?
-      `;
-
-      db.get(statsQuery, [friendId], (err, stats) => {
-        if (err) return res.status(500).json({ error: 'Failed to fetch stats' });
-        res.json({
-          attended: stats.attended || 0,
-          total: stats.total || 0,
-          percentage: stats.total > 0 ? (stats.attended / stats.total) * 100 : 0
-        });
-      });
-    }
-  );
+  if (error) {
+    console.error('Save attendance error:', error);
+    return res.status(500).json({ error: 'Failed to save attendance' });
+  }
+  res.json({ id: data.id, message: 'Attendance saved successfully' });
 });
 
 // ============================================
@@ -749,12 +648,9 @@ app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`\n📧 Email Configuration:`);
   console.log(`   Sender: ${EMAIL_CONFIG.senderEmail}`);
-  console.log(`\n🗄️  Database: SQLite (Local)`);
-  console.log(`   File: ./attendance.db`);
-  console.log(`\n🔗 Available Social Routes:`);
-  console.log(`   GET  /api/users/search - Search for classmates`);
-  console.log(`   POST /api/friends/request - Send friend request`);
-  console.log(`   POST /api/friends/accept - Accept request`);
-  console.log(`   GET  /api/friends/:userId - List all friends`);
-  console.log(`   GET  /api/friends/attendance/:friendId - Peek friend attendance`);
+  console.log(`\n🗄️  Database: Supabase (Cloud)`);
+  console.log(`   URL: ${supabaseUrl}`);
 });
+
+// For Vercel hosting
+module.exports = app;
