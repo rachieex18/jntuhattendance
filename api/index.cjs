@@ -646,14 +646,16 @@ app.post('/api/attendance', async (req, res) => {
 // ============================================
 // 🚀 START SERVER
 // ============================================
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`\n📧 Email Configuration:`);
-  console.log(`   Sender: ${EMAIL_CONFIG.senderEmail}`);
-  console.log(`\n🗄️  Database: Supabase (Cloud)`);
-  console.log(`   URL: ${supabaseUrl}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3001;
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on http://localhost:${PORT}`);
+    console.log(`\n📧 Email Configuration:`);
+    console.log(`   Sender: ${EMAIL_CONFIG.senderEmail}`);
+    console.log(`\n🗄️  Database: Supabase (Cloud)`);
+    console.log(`   URL: ${supabaseUrl}`);
+  });
+}
 
 // For Vercel hosting
 module.exports = app;
