@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS verification_codes (
     email TEXT PRIMARY KEY,
     code TEXT NOT NULL,
-    expires_at BIGINT NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -31,14 +31,14 @@ CREATE TABLE IF NOT EXISTS pending_users (
     roll_number TEXT NOT NULL,
     semester INTEGER,
     branch TEXT,
-    created_at BIGINT NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Reset tokens table (for password recovery)
 CREATE TABLE IF NOT EXISTS reset_tokens (
     token TEXT PRIMARY KEY,
     email TEXT NOT NULL,
-    expires_at BIGINT NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     verified BOOLEAN DEFAULT FALSE
 );
 
