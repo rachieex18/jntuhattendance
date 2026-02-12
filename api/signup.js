@@ -40,7 +40,7 @@ export default async function handler(req, res) {
                 roll_number: rollNumber,
                 semester: parseInt(semester) || null,
                 branch,
-                created_at: Date.now(),
+                created_at: new Date().toISOString(),
             });
 
         if (pendingError) {
@@ -53,7 +53,7 @@ export default async function handler(req, res) {
             .upsert({
                 email,
                 code: otp,
-                expires_at: Date.now() + 10 * 60 * 1000,
+                expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
             });
 
         if (otpError) {
