@@ -13,7 +13,7 @@ export default async function handler(req, res) {
             .eq('email', email)
             .single();
 
-        if (!storedCode || storedCode.code !== code || Date.now() > storedCode.expires_at) {
+        if (!storedCode || storedCode.code !== code || new Date() > new Date(storedCode.expires_at)) {
             return res.status(400).json({ error: 'Invalid or expired code' });
         }
 

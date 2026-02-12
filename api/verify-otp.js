@@ -18,7 +18,7 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Invalid or expired OTP' });
         }
 
-        if (Date.now() > storedCode.expires_at) {
+        if (new Date() > new Date(storedCode.expires_at)) {
             await supabase.from('verification_codes').delete().eq('email', email);
             return res.status(400).json({ error: 'OTP has expired' });
         }

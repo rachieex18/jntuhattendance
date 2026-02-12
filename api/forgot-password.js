@@ -24,7 +24,7 @@ export default async function handler(req, res) {
             .upsert({
                 email,
                 code: resetCode,
-                expires_at: Date.now() + 15 * 60 * 1000,
+                expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
             });
 
         await transporter.sendMail({
