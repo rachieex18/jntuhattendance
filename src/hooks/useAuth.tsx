@@ -86,7 +86,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             if (response.ok) {
                 return { success: true };
             } else {
-                return { success: false, error: data.error };
+                const errorMessage = data.details ? `${data.error}: ${data.details}` : data.error;
+                return { success: false, error: errorMessage };
             }
         } catch (error) {
             return { success: false, error: 'Network error' };
