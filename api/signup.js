@@ -44,7 +44,8 @@ export default cors(async function handler(req, res) {
             });
 
         if (pendingError) {
-            return res.status(500).json({ error: 'Failed to save signup data' });
+            console.error('Supabase Pending User Error:', pendingError);
+            return res.status(500).json({ error: 'Failed to save signup data', details: pendingError.message });
         }
 
         // Store OTP in verification_codes table
@@ -57,7 +58,8 @@ export default cors(async function handler(req, res) {
             });
 
         if (otpError) {
-            return res.status(500).json({ error: 'Failed to save verification code' });
+            console.error('Supabase OTP Error:', otpError);
+            return res.status(500).json({ error: 'Failed to save verification code', details: otpError.message });
         }
 
         // Send OTP email
