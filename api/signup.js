@@ -1,7 +1,7 @@
-import { supabase, generateOTP, sendOTPEmail } from './_lib.js';
+import { supabase, generateOTP, sendOTPEmail, cors } from './_lib.js';
 import bcrypt from 'bcryptjs';
 
-export default async function handler(req, res) {
+export default cors(async function handler(req, res) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
@@ -72,4 +72,4 @@ export default async function handler(req, res) {
         console.error('Signup error:', error);
         res.status(500).json({ error: 'Signup failed' });
     }
-}
+});

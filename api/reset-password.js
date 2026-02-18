@@ -1,7 +1,7 @@
-import { supabase } from './_lib.js';
+import { supabase, cors } from './_lib.js';
 import bcrypt from 'bcryptjs';
 
-export default async function handler(req, res) {
+export default cors(async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     const { email, code, newPassword } = req.body;
@@ -32,4 +32,4 @@ export default async function handler(req, res) {
     } catch (error) {
         res.status(500).json({ error: 'Failed to reset password' });
     }
-}
+});
