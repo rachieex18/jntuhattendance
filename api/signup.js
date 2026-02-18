@@ -40,7 +40,6 @@ export default cors(async function handler(req, res) {
                 roll_number: rollNumber,
                 semester: parseInt(semester) || null,
                 branch,
-                created_at: new Date().toISOString(),
             });
 
         if (pendingError) {
