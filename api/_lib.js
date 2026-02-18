@@ -4,11 +4,19 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Supabase Init
-export const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
-);
+// Supabase Init Check
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+    console.error('CRITICAL: Missing Supabase Environment Variables');
+}
+
+if (supabaseKey && supabaseKey.startsWith('sb_')) {
+    console.error('CRITICAL: You are using a publishable key instead of a Service Role key!');
+}
+
+export const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Email Init
 export const transporter = nodemailer.createTransport({
