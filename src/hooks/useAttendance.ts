@@ -31,14 +31,14 @@ export const useAttendance = () => {
 
     useEffect(() => {
         if (user) {
-            fetchData();
+            fetchData(true);
         }
     }, [user]);
 
-    const fetchData = async () => {
+    const fetchData = async (isInitial = false) => {
         if (!user) return;
 
-        setLoading(true);
+        if (isInitial) setLoading(true);
         try {
             // Fetch subjects - Use query parameter for Vercel compatibility
             const subjectsResponse = await fetch(`${API_BASE}/subjects?userId=${user.id}`);
@@ -78,11 +78,11 @@ export const useAttendance = () => {
             console.error('Error fetching attendance data:', error);
             toast.error("Failed to load attendance data. Please refresh.");
         } finally {
-            setLoading(false);
+            if (isInitial) setLoading(false);
         }
     };
 
-    const addSubject = async (subjectData: { subjectName: string; credits: number; hoursPerWeek: number; subjectType: string }) => {
+    const addSubject = async (subjectData: { subjectName: string; credits: number; hoursPerWeek: number; subjectType: string }, skipRefresh = false) => {
         if (!user) return { success: false, error: 'User not authenticated' };
 
         try {
@@ -98,7 +98,7 @@ export const useAttendance = () => {
             });
 
             if (response.ok) {
-                await fetchData(); // Refresh data
+                if (!skipRefresh) await fetchData(); // Refresh data only if not skipped
                 return { success: true };
             } else {
                 const error = await response.json();
@@ -107,6 +107,20 @@ export const useAttendance = () => {
         } catch (error) {
             return { success: false, error: 'Network error' };
         }
+    };
+
+    const batchAddSubjects = async (subjectsList: Array<{ subjectName: string; credits: number; hoursPerWeek: number; subjectType: string }>) => {
+        if (!user) return { successCount: 0, total: subjectsList.length, error: 'User not authenticated' };
+
+        const results = [];
+        for (const sub of subjectsList) {
+            const result = await addSubject(sub, true); // Skip refresh for each
+            results.push(result);
+        }
+
+        await fetchData(false); // Fetch once at the end without triggering global loading
+        const successCount = results.filter(r => r.success).length;
+        return { successCount, total: subjectsList.length };
     };
 
     const addAttendance = async (attendanceData: { subjectId: number; date: string; hoursAttended: number; totalHours: number; isMidterm: boolean; notes?: string }) => {
@@ -163,8 +177,9 @@ export const useAttendance = () => {
         stats,
         trendData,
         loading,
-        refresh: fetchData,
+        refresh: () => fetchData(false),
         addSubject,
+        batchAddSubjects,
         addAttendance,
         deleteSubject,
     };

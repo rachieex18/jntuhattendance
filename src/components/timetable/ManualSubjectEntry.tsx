@@ -94,7 +94,7 @@ const SECTION_PRESETS: Record<string, SubjectEntry[]> = {
 };
 
 export const ManualSubjectEntry = () => {
-    const { addSubject, refresh } = useAttendance();
+    const { batchAddSubjects } = useAttendance();
     const [subjects, setSubjects] = useState<SubjectEntry[]>([
         { name: '', type: 'theory', hours: 4 }
     ]);
@@ -137,28 +137,26 @@ export const ManualSubjectEntry = () => {
         }
 
         setSaving(true);
-        let successCount = 0;
-
         try {
-            for (const subject of subjects) {
-                const result = await addSubject({
-                    subjectName: subject.name,
-                    subjectType: subject.type as any,
-                    hoursPerWeek: subject.hours,
-                    credits: subject.type === 'lab' ? 2 : 3
-                });
+            const formattedSubjects = subjects.map(s => ({
+                subjectName: s.name,
+                subjectType: s.type as any,
+                hoursPerWeek: s.hours,
+                credits: s.type === 'lab' ? 2 : 3
+            }));
 
-                if (result.success) successCount++;
-            }
+            const result = await batchAddSubjects(formattedSubjects);
 
-            if (successCount > 0) {
-                toast.success(`Successfully saved ${successCount} subjects!`);
-                await refresh();
+            if (result.successCount > 0) {
+                toast.success(`Successfully saved ${result.successCount} out of ${result.total} subjects!`);
                 setSubjects([{ name: '', type: 'theory', hours: 4 }]);
                 setSelectedSection('');
+            } else {
+                toast.error(result.error || "Failed to save subjects. Please check your connection.");
             }
         } catch (err) {
-            toast.error("Failed to save subjects.");
+            console.error("Save error:", err);
+            toast.error("An unexpected error occurred while saving.");
         } finally {
             setSaving(false);
         }
