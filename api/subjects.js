@@ -20,7 +20,13 @@ export default cors(async function handler(req, res) {
 
     if (req.method === 'POST') {
         const { userId, subjectName, credits, hoursPerWeek, subjectType } = req.body;
-        if (!userId || !subjectName) return res.status(400).json({ error: 'Missing required fields' });
+        
+        console.log('POST /subjects request:', { userId, subjectName, credits, hoursPerWeek, subjectType });
+        
+        if (!userId || !subjectName) {
+            console.error('Missing required fields:', { userId, subjectName });
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
 
         const { data, error } = await supabase
             .from('subjects')
@@ -36,8 +42,10 @@ export default cors(async function handler(req, res) {
 
         if (error) {
             console.error('Add subject error:', error);
-            return res.status(500).json({ error: 'Failed to add subject' });
+            return res.status(500).json({ error: 'Failed to add subject', details: error.message });
         }
+        
+        console.log('Subject added successfully:', data);
         return res.status(200).json(data);
     }
 
