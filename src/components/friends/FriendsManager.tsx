@@ -27,7 +27,7 @@ interface SearchResult {
     branch: string;
 }
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 export const FriendsManager = () => {
     const { user } = useAuth();
@@ -45,21 +45,31 @@ export const FriendsManager = () => {
 
     const fetchFriends = async () => {
         try {
-            const response = await fetch(`${API_BASE}/friends/${user?.id}`);
+            // Use query parameter for Vercel's api/friends.js
+            const response = await fetch(`${API_BASE}/friends?userId=${user?.id}`);
+            if (!response.ok) throw new Error("Failed to fetch");
             const data = await response.json();
+
+            if (!Array.isArray(data)) {
+                setFriends([]);
+                return;
+            }
 
             // For accepted friends, fetch their attendance too
             const friendsWithAttendance = await Promise.all(data.map(async (f: Friend) => {
                 if (f.status === 'accepted') {
-                    const attRes = await fetch(`${API_BASE}/friends/attendance/${f.user_id}?userId=${user?.id}`);
-                    const attData = await attRes.json();
-                    return { ...f, attendance: attData };
+                    const attRes = await fetch(`${API_BASE}/friends/attendance?userId=${user?.id}&friendId=${f.user_id}`);
+                    if (attRes.ok) {
+                        const attData = await attRes.json();
+                        return { ...f, attendance: attData };
+                    }
                 }
                 return f;
             }));
 
             setFriends(friendsWithAttendance);
         } catch (error) {
+            console.error("Load friends error:", error);
             toast.error("Failed to load friends list");
         } finally {
             setLoading(false);
@@ -267,7 +277,7 @@ export const FriendsManager = () => {
                                                 <div className="flex justify-between items-end">
                                                     <span className="text-[10px] font-bold text-gray-500 uppercase">Overall Attendance</span>
                                                     <span className={`text-sm font-black ${friend.attendance.percentage >= 75 ? 'text-success' :
-                                                            friend.attendance.percentage >= 65 ? 'text-warning' : 'text-danger'
+                                                        friend.attendance.percentage >= 65 ? 'text-warning' : 'text-danger'
                                                         }`}>
                                                         {friend.attendance.percentage.toFixed(1)}%
                                                     </span>
@@ -275,7 +285,7 @@ export const FriendsManager = () => {
                                                 <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
                                                     <div
                                                         className={`h-full transition-all duration-1000 ${friend.attendance.percentage >= 75 ? 'bg-success' :
-                                                                friend.attendance.percentage >= 65 ? 'bg-warning' : 'bg-danger'
+                                                            friend.attendance.percentage >= 65 ? 'bg-warning' : 'bg-danger'
                                                             }`}
                                                         style={{ width: `${Math.min(friend.attendance.percentage, 100)}%` }}
                                                     ></div>

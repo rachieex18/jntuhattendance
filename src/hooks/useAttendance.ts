@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from './useAuth';
 import { Subject, Attendance } from '../types/database.types';
 import { calculateAttendanceStats, calculateBunkableHours, getAttendanceTrend } from '../lib/calculations';
+import { toast } from 'sonner';
 
 interface AttendanceStats {
     totalAttended: number;
@@ -39,16 +40,27 @@ export const useAttendance = () => {
 
         setLoading(true);
         try {
-            // Fetch subjects
-            const subjectsResponse = await fetch(`${API_BASE}/subjects/${user.id}`);
+            // Fetch subjects - Use query parameter for Vercel compatibility
+            const subjectsResponse = await fetch(`${API_BASE}/subjects?userId=${user.id}`);
+            if (!subjectsResponse.ok) {
+                console.error('Subjects fetch failed:', subjectsResponse.status);
+                setSubjects([]);
+                return;
+            }
             const subjectsData = await subjectsResponse.json();
 
-            // Fetch attendance
-            const attendanceResponse = await fetch(`${API_BASE}/attendance/${user.id}`);
+            // Fetch attendance - Use query parameter for Vercel compatibility
+            const attendanceResponse = await fetch(`${API_BASE}/attendance?userId=${user.id}`);
+            if (!attendanceResponse.ok) {
+                console.error('Attendance fetch failed:', attendanceResponse.status);
+                setAttendance([]);
+                return;
+            }
             const attendanceData = await attendanceResponse.json();
 
-            const fetchedSubjects = subjectsData || [];
-            const fetchedAttendance = attendanceData || [];
+            // Ensure we have arrays before processing
+            const fetchedSubjects = Array.isArray(subjectsData) ? subjectsData : [];
+            const fetchedAttendance = Array.isArray(attendanceData) ? attendanceData : [];
 
             setSubjects(fetchedSubjects);
             setAttendance(fetchedAttendance);
@@ -64,6 +76,7 @@ export const useAttendance = () => {
             setTrendData(trend);
         } catch (error) {
             console.error('Error fetching attendance data:', error);
+            toast.error("Failed to load attendance data. Please refresh.");
         } finally {
             setLoading(false);
         }
@@ -127,7 +140,8 @@ export const useAttendance = () => {
         if (!user) return { success: false, error: 'User not authenticated' };
 
         try {
-            const response = await fetch(`${API_BASE}/subjects/${subjectId}`, {
+            // Use query parameter for id
+            const response = await fetch(`${API_BASE}/subjects?id=${subjectId}`, {
                 method: 'DELETE',
             });
 
