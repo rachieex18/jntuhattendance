@@ -1,9 +1,10 @@
 import { supabase, cors } from './_lib.js';
 
 export default cors(async function handler(req, res) {
-    const { userId, id } = req.query;
+    try {
+        const { userId, id } = req.query;
 
-    if (req.method === 'GET') {
+        if (req.method === 'GET') {
         if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
         const { data, error } = await supabase
@@ -65,4 +66,8 @@ export default cors(async function handler(req, res) {
     }
 
     return res.status(405).json({ error: 'Method not allowed' });
+    } catch (error) {
+        console.error('API error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
 });
