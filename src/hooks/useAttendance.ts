@@ -118,9 +118,15 @@ export const useAttendance = () => {
             results.push(result);
         }
 
-        await fetchData(false); // Fetch once at the end without triggering global loading
+        await fetchData(false); // Fetch once at the end
         const successCount = results.filter(r => r.success).length;
-        return { successCount, total: subjectsList.length };
+        const firstError = results.find(r => !r.success)?.error;
+        
+        return { 
+            successCount, 
+            total: subjectsList.length,
+            error: successCount === 0 ? firstError : (successCount < subjectsList.length ? 'Some subjects failed to save' : null)
+        };
     };
 
     const addAttendance = async (attendanceData: { subjectId: number; date: string; hoursAttended: number; totalHours: number; isMidterm: boolean; notes?: string }) => {
